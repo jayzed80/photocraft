@@ -222,6 +222,69 @@ pub(super) fn proximity_source_patch(img: &[f32], w: usize, h: usize, ch: usize,
     Some(out)
 }
 
+/// The median of `v` (0 when empty), reordering it.
+fn median(v: &mut [f32]) -> f32 {
+    if v.is_empty() {
+        return 0.0;
+    }
+    let mid = v.len() / 2;
+    *v.select_nth_unstable_by(mid, f32::total_cmp).1
+}
+
+/// Proximity Match: the seamless clone fits the copied patch to the dab's surroundings through the
+/// mismatch `img − patch` on the pixels around the `hole` (the rest of `domain`, where the original
+/// is known). Where the patch's border runs off the texture it was copied from onto another colour
+/// beside it, that mismatch is a different region, not a colour shift to correct, and the solve
+/// spread it as a tint over the whole dab (#12585). Such a pixel, one whose mismatch strays from the
+/// median by more than 5 median absolute deviations (and at least 0.1), takes the median mismatch
+/// instead; the others keep theirs. So does a hole pixel up to two steps from one of them whose own
+/// mismatch strays as far: the brush's anti-aliased rim, copied from the same strip.
+fn steady_proximity_boundary(img: &[f32], patch: &mut [f32], w: usize, ch: usize, hole: &[bool], domain: &[bool]) {
+    let n = hole.len();
+    if ch == 0 || w == 0 || domain.len() != n || Some(img.len()) != n.checked_mul(ch) || patch.len() != img.len() {
+        return;
+    }
+    let known: Vec<bool> = domain.iter().zip(hole).map(|(d, h)| *d && !*h).collect();
+    let mut med = vec![0.0f32; ch];
+    let mut tol = vec![0.0f32; ch];
+    for c in 0..ch {
+        let mut d: Vec<f32> = img.chunks_exact(ch).zip(patch.chunks_exact(ch)).zip(&known).filter(|(_, k)| **k).map(|((i, p), _)| i[c] - p[c]).collect();
+        if d.is_empty() {
+            return;
+        }
+        let m = median(&mut d);
+        let mut dev: Vec<f32> = d.iter().map(|v| (v - m).abs()).collect();
+        med[c] = m;
+        tol[c] = (5.0 * median(&mut dev)).max(0.1);
+    }
+    let strays = |i: &[f32], p: &[f32]| (0..ch).any(|c| (i[c] - p[c] - med[c]).abs() > tol[c]);
+    let mut replaced = vec![false; n];
+    for (((i, p), k), r) in img.chunks_exact(ch).zip(patch.chunks_exact_mut(ch)).zip(&known).zip(&mut replaced) {
+        if *k && strays(i, p) {
+            p.iter_mut().zip(i).zip(&med).for_each(|((p, i), m)| *p = i - m);
+            *r = true;
+        }
+    }
+    // Two steps in, as deep as the patch reaches past the hole (`domain` is the hole grown by 2).
+    for _ in 0..2 {
+        let was = replaced.clone();
+        let beside = |k: usize| {
+            let (x, y) = (k % w, k / w);
+            let left = x.checked_sub(1).map(|x| y * w + x);
+            let right = (x + 1 < w).then(|| y * w + x + 1);
+            let up = y.checked_sub(1).map(|y| y * w + x);
+            let down = Some((y + 1) * w + x);
+            [left, right, up, down].into_iter().flatten().any(|j| was.get(j).copied().unwrap_or(false))
+        };
+        for (k, (((i, p), h), r)) in img.chunks_exact(ch).zip(patch.chunks_exact_mut(ch)).zip(hole).zip(&mut replaced).enumerate() {
+            if *h && !*r && beside(k) && strays(i, p) {
+                p.iter_mut().zip(i).zip(&med).for_each(|((p, i), m)| *p = i - m);
+                *r = true;
+            }
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SpotType {
     ContentAware,
@@ -272,7 +335,13 @@ fn spot_heal_surface(surf: &mut Surface, pre: &Document, stroke: &Stroke, kind: 
         SpotType::ProximityMatch => {
             let ring = (size / 8.0).clamp(3.0, 16.0) as usize;
             match inpaint::best_offset(w, h, ch, &img.data, &domain, ring, margin) {
-                Some((dx, dy)) => proximity_source_patch(&img.data, w, h, ch, &domain, dx, dy).unwrap_or_else(|| content_aware(&img.data)),
+                Some((dx, dy)) => match proximity_source_patch(&img.data, w, h, ch, &domain, dx, dy) {
+                    Some(mut patch) => {
+                        steady_proximity_boundary(&img.data, &mut patch, w, ch, &hole, &domain);
+                        patch
+                    }
+                    None => content_aware(&img.data),
+                },
                 None => content_aware(&img.data),
             }
         }
@@ -302,3 +371,7 @@ pub(super) fn spot_healing(s: &mut Session, p: &Value) -> Result<Value> {
 #[cfg(test)]
 #[path = "heal_indexed_tests.rs"]
 mod heal_indexed_tests;
+
+#[cfg(test)]
+#[path = "spot_healing_proximity_tests.rs"]
+mod spot_healing_proximity_tests;
