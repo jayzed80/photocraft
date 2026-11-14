@@ -1303,7 +1303,7 @@ fn build() -> Vec<CommandSpec> {
                 _ => None,
             },
             params,
-            enabled: if kind == "gradientMap" { crate::adjust_cmds::has_gradient_map_target } else { crate::adjust_cmds::has_adjustable },
+            enabled: crate::adjust_cmds::has_adjustable,
             run: |s, p| {
                 let kind = p.get("__kind").and_then(Value::as_str).unwrap_or("invert").to_string();
                 if matches!(kind.as_str(), "levels" | "curves") {
