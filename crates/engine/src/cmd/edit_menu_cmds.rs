@@ -53,28 +53,14 @@ pub struct CustomShape {
     pub path: Path,
 }
 
-/// Remembered Find and Replace Text match (or collapsed cursor after a replacement) and the
-/// search query it belongs to.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct FindCursor {
-    pub layer: LayerId,
-    pub start: usize,
-    pub end: usize,
-    pub find: String,
-    pub case_sensitive: bool,
-    pub whole_word: bool,
-    pub forward: bool,
-    pub all_layers: bool,
-}
-
 /// Edit-menu state kept by the session.
 #[derive(Clone, Debug, Default)]
 pub struct EditState {
     pub fade: Option<FadeSource>,
     /// Custom shape library (the vector tools read it).
     pub custom_shapes: Vec<CustomShape>,
-    /// Find and Replace Text position and the query it belongs to.
-    pub find_cursor: Option<FindCursor>,
+    /// Find and Replace Text position: (layer, byte offset after the current match).
+    pub find_cursor: Option<(LayerId, usize, usize)>,
 }
 
 /// Commands whose result Edit › Fade can blend back against the previous state.
