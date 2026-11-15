@@ -725,18 +725,11 @@ fn warp_defaults(app: &PhotocraftApp, fields: &mut Map<String, Value>) {
     fields.insert("orientation".into(), json!(if w.horizontal { "horizontal" } else { "vertical" }));
 }
 
-/// Global Light reflects the active document's current shared lighting, or the new-document default when none is open.
+/// Global Light reflects the active document's current shared lighting, never remembered values.
 fn global_light_defaults(app: &PhotocraftApp, fields: &mut Map<String, Value>) {
-    let light = match app.session.active() {
-        Some(st) => st.doc.global_light,
-        None => {
-            // Without an open document, Photoshop shows the smaller default-setting variant without Preview.
-            fields.remove("__preview");
-            app.session.prefs().global_light
-        }
-    };
-    fields.insert("angle".into(), json!(light.angle));
-    fields.insert("altitude".into(), json!(light.altitude));
+    let Some(st) = app.session.active() else { return };
+    fields.insert("angle".into(), json!(st.doc.global_light.angle));
+    fields.insert("altitude".into(), json!(st.doc.global_light.altitude));
 }
 
 /// Proof Setup reflects the active document's current proofing condition, never remembered values.
