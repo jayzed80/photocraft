@@ -1308,17 +1308,16 @@ fn build() -> Vec<CommandSpec> {
                     crate::channel_cmds::resolve_tone_target(s, false, p)?;
                 }
                 let eyedropped = if matches!(kind.as_str(), "levels" | "curves") { crate::adjust_params::destructive_eyedropper(s, &kind, p)? } else { None };
-                let record_resolved = |adj: &Adjustment| {
+                // A smart filter re-runs its params, so it records what an eyedropper resolved
+                // to, not the sample (#3127).
+                let recorded = eyedropped.as_ref().map(|adj| {
                     let mut q = p.clone();
                     if let (Value::Object(q), Value::Object(resolved)) = (&mut q, crate::adjust_params::to_params(adj)) {
                         q.remove("eyedropper");
                         q.extend(resolved);
                     }
                     q
-                };
-                // A smart filter re-runs its params, so it records what an eyedropper resolved
-                // to, not the sample (#3127).
-                let mut recorded = eyedropped.as_ref().map(record_resolved);
+                });
                 let adj = match eyedropped {
                     Some(adj) => adj,
                     None => {
@@ -1329,15 +1328,7 @@ fn build() -> Vec<CommandSpec> {
                         } else {
                             p.clone()
                         };
-                        let default_gm = (kind == "gradientMap").then(|| {
-                            let c = |x: [f32; 4]| [x[0], x[1], x[2]];
-                            crate::adjust_params::default_gradient_map(c(s.tools.foreground), c(s.tools.background))
-                        });
-                        let adj = crate::adjust_params::from_params(&kind, &tone, default_gm.as_ref(), adjust_mode(s, p))?;
-                        if kind == "gradientMap" && p.get("stops").is_none_or(Value::is_null) && p.get("source").is_none_or(Value::is_null) {
-                            recorded = Some(record_resolved(&adj));
-                        }
-                        adj
+                        crate::adjust_params::from_params(&kind, &tone, None, adjust_mode(s, p))?
                     }
                 };
                 let adj = if matches!(kind.as_str(), "levels" | "curves")
