@@ -598,18 +598,8 @@ fn curve_mode(app: &PhotocraftApp, kind: &str, fields: &Map<String, Value>) -> p
     if matches!(kind, "levels" | "curves") && isolated(app, fields).is_some_and(|c| c.gray.is_some()) { photocraft_doc::ColorMode::Grayscale } else { mode }
 }
 
-/// Whether this adjustment dialog owns its own right-side OK / Cancel / Preview column.
-pub fn owns_buttons(fields: &Map<String, Value>) -> bool {
-    fields.get("__adjust").and_then(Value::as_str) == Some("gradientMap")
-}
-
-/// Dialog body: the kind's editor over the fields, then the Preview checkbox (or right-column
-/// actions for Gradient Map).
+/// Dialog body: the kind's editor over the fields, then the Preview checkbox.
 pub fn body(app: &mut PhotocraftApp, ui: &mut egui::Ui, fields: &mut Map<String, Value>) {
-    let _ = body_with_response(app, ui, 0, fields, true);
-}
-
-pub fn body_with_response(app: &mut PhotocraftApp, ui: &mut egui::Ui, dialog_id: u64, fields: &mut Map<String, Value>, interactive: bool) -> Option<bool> {
     let kind = fields.get("__adjust").and_then(Value::as_str).unwrap_or_default().to_string();
     let context = if matches!(kind.as_str(), "levels" | "curves") {
         match target_context(app, fields) {
@@ -617,7 +607,7 @@ pub fn body_with_response(app: &mut PhotocraftApp, ui: &mut egui::Ui, dialog_id:
             Err(error) => {
                 ui.label(tl!("The adjustment target is missing or unavailable."));
                 ui.label(error.to_string());
-                return None;
+                return;
             }
         }
     } else {
@@ -664,10 +654,8 @@ pub fn body_with_response(app: &mut PhotocraftApp, ui: &mut egui::Ui, dialog_id:
         }
         _ => None,
     };
-    let mem = dialog_mem(&kind);
-    ui.data_mut(|d| d.insert_temp(mem.with("interactive"), interactive));
     let cx = EditorCx {
-        mem,
+        mem: dialog_mem(&kind),
         hist,
         gray,
         swatches: adjust_editors::swatches(app),
@@ -676,51 +664,9 @@ pub fn body_with_response(app: &mut PhotocraftApp, ui: &mut egui::Ui, dialog_id:
         dynamic_color_sliders: app.session.prefs().interface.dynamic_color_sliders,
         isolated_curve,
     };
-
-    let own_buttons = owns_buttons(fields);
-    let mut outcome = None;
-    let mut e = if own_buttons {
-        ui.horizontal_top(|ui| {
-            let e = ui.vertical(|ui| adjust_editors::editor(ui, &kind, &mut values, &cx)).inner;
-            ui.add_space(12.0);
-            ui.vertical(|ui| {
-                if crate::widgets::primary_button(ui, tl!("OK"), 84.0).clicked() {
-                    outcome = Some(true);
-                }
-                ui.add_space(4.0);
-                let reset = ui.input(|i| i.modifiers.alt) && crate::dialog_alt_reset::supported(fields);
-                let cancel_label = if reset { tl!("Reset") } else { tl!("Cancel") };
-                if crate::widgets::secondary_button(ui, cancel_label, 84.0).clicked() {
-                    if reset {
-                        crate::dialog_alt_reset::apply(app, ui.ctx(), fields);
-                    } else {
-                        outcome = Some(false);
-                    }
-                }
-                ui.add_space(8.0);
-                let alt = ui.input(|i| i.modifiers.alt);
-                let popup_open = egui::Popup::is_any_open(ui.ctx());
-                let mut preview = fields.get("__preview").and_then(Value::as_bool).unwrap_or(true);
-                let alt_p = interactive && !popup_open && alt && ui.input(|i| i.key_pressed(egui::Key::P));
-                if adjust_editors::mnemonic_checkbox(ui, &mut preview, tl!("Preview"), 'P', alt).changed() || alt_p {
-                    if alt_p {
-                        preview = !preview;
-                    }
-                    fields.insert("__preview".into(), json!(preview));
-                }
-            });
-            e
-        })
-        .inner
-    } else {
-        adjust_editors::editor(ui, &kind, &mut values, &cx)
-    };
-
+    let mut e = adjust_editors::editor(ui, &kind, &mut values, &cx);
     if e.import_gradients {
         crate::preset_files_ui::import_gradients_dialog(app);
-    }
-    if e.edit_gradient {
-        crate::gradient_ui::open_for_dialog(app, dialog_id, &values);
     }
     if e.auto {
         // A Smart Filter's Auto reads what that filter edits, not the filtered result.
@@ -739,16 +685,11 @@ pub fn body_with_response(app: &mut PhotocraftApp, ui: &mut egui::Ui, dialog_id:
         }
     }
     crate::levels_clipping::sync(ui.ctx(), dialog_mem(&kind), fields);
-    if !own_buttons {
-        let mut preview = fields.get("__preview").and_then(Value::as_bool).unwrap_or(true);
-        ui.add_space(6.0);
-        if crate::widgets::checkbox(ui, &mut preview, tl!("Preview")).changed() {
-            fields.insert("__preview".into(), json!(preview));
-        }
-    } else if outcome.is_none() && interactive && !egui::Popup::is_any_open(ui.ctx()) && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-        outcome = Some(true);
+    let mut preview = fields.get("__preview").and_then(Value::as_bool).unwrap_or(true);
+    ui.add_space(6.0);
+    if crate::widgets::checkbox(ui, &mut preview, tl!("Preview")).changed() {
+        fields.insert("__preview".into(), json!(preview));
     }
-    outcome
 }
 
 #[cfg(test)]

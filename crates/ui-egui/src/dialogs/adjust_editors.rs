@@ -46,7 +46,7 @@ use curves::{CURVE_HANDLE_SIZE, curve_graph};
 pub use curves::{ToneChannel, tone_channels};
 pub(crate) use curves::{curve_side_max, read_curve};
 use gradient_map::gradient_map;
-pub use gradient_map::{gradient_presets, is_gray, mnemonic_checkbox, modal_stop_editor, swatches};
+pub use gradient_map::{gradient_presets, is_gray, swatches};
 use hue_saturation::hue_saturation;
 #[cfg(test)]
 use hue_saturation::{hue_range_handle_at, hue_range_zone, lightness_track, move_hue_range_handle, move_hue_range_zone, saturation_track};
@@ -100,8 +100,6 @@ pub struct Edit {
     pub import_gradients: bool,
     /// Black & White's Auto: the host fills in the weights for its image ([`apply_auto`]).
     pub auto: bool,
-    /// Open the modal Gradient Editor on top of the Gradient Map dialog.
-    pub edit_gradient: bool,
 }
 
 impl Edit {
@@ -110,7 +108,6 @@ impl Edit {
         self.commit |= o.commit;
         self.import_gradients |= o.import_gradients;
         self.auto |= o.auto;
-        self.edit_gradient |= o.edit_gradient;
     }
     fn discrete(changed: bool) -> Self {
         Edit { changed, commit: changed, ..Default::default() }
