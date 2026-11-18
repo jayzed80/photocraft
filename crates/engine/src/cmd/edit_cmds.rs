@@ -270,7 +270,9 @@ fn lift_region(src: &Surface, sel: Option<&Surface>, r: Rect, n: usize) -> Resul
         let mask = crate::allocation::read_region(m, r, "applying the selection to copied pixels")?;
         let mk = m.format().channels().max(1);
         for (p, a) in px.chunks_exact_mut(n.max(1)).zip(mask.chunks_exact(mk)) {
-            if let Some(alpha) = p.last_mut() {
+            if a[0] <= 0.0 {
+                p.fill(0.0);
+            } else if let Some(alpha) = p.last_mut() {
                 *alpha *= a[0];
             }
         }

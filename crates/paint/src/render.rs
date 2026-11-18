@@ -1347,6 +1347,10 @@ impl StrokeRenderer {
                         if b.erase {
                             if let (Some(a), false) = (a_idx, lock_transparency) {
                                 px[a] *= 1.0 - k;
+                                if px[a] <= 0.0 {
+                                    px.fill(0.0);
+                                    continue;
+                                }
                             }
                             if dither {
                                 dither8(px, x, y);

@@ -1977,3 +1977,43 @@ fn paste_into_a_position_locked_artboards_own_mask_keeps_the_place_on_the_board(
     assert_eq!(r["offset"], json!([190, 10]), "moved by B's origin minus A's");
     assert!((mask_at(&s, b, 205, 25) - lum).abs() < 2.0 / 255.0, "the same spot on B");
 }
+
+#[test]
+fn cut_with_selection_zeroes_unselected_color_channels() {
+    let mut s = Session::new();
+    s.execute("file.new", json!({"width": 100, "height": 100})).unwrap();
+    // White Background with a black square at (20, 20)..(40, 40), and an L-shaped selection
+    // whose bounding box (20, 20)..(40, 60) includes unselected white pixels at (25, 40)..(40, 60).
+    s.edit("setup", |doc, a| {
+        doc.layer_mut(a.unwrap()).unwrap().surface_mut().unwrap().fill_rect(Rect::new(20, 20, 40, 40), &[0.0, 0.0, 0.0, 1.0]);
+        let mut sel = Surface::new(PixelFormat::GRAY8);
+        sel.fill_rect(Rect::new(20, 20, 40, 40), &[1.0]);
+        sel.fill_rect(Rect::new(20, 40, 25, 60), &[1.0]);
+        doc.selection = Some(sel);
+        Ok(())
+    })
+    .unwrap();
+    s.execute("edit.cut", json!({})).unwrap();
+
+    s.execute("file.new", json!({"width": 100, "height": 100})).unwrap();
+    let r = s.execute("edit.paste", json!({})).unwrap();
+    let pasted = LayerId(r["layer"].as_u64().unwrap());
+    let dx = r["offset"][0].as_i64().unwrap() as i32;
+    let dy = r["offset"][1].as_i64().unwrap() as i32;
+
+    let doc = &s.active().unwrap().doc;
+    let surf = doc.layer(pasted).unwrap().surface().unwrap();
+    assert_eq!(surf.pixel(dx + 30, dy + 50), vec![0.0, 0.0, 0.0, 0.0], "unselected area inside selection bounds must have zeroed RGB");
+
+    // Erase the bottom leg of the L; Move tool bounds must match Ctrl+Click transparency bounds.
+    s.execute("select.all", json!({})).unwrap();
+    s.edit("clear leg", |doc, _| {
+        crate::pixels::try_clear_surface(doc.layer_mut(pasted).unwrap().surface_mut().unwrap(), Rect::new(dx + 20, dy + 40, dx + 25, dy + 60), None)
+    })
+    .unwrap();
+    s.execute("select.deselect", json!({})).unwrap();
+    let frame = crate::transform_cmds::transform_frame(&s.active().unwrap().doc, s.active().unwrap().doc.layer(pasted).unwrap());
+    s.execute("select.loadSelection", json!({"channel": "transparency"})).unwrap();
+    let sel_bounds = s.active().unwrap().doc.selection.as_ref().unwrap().content_bounds();
+    assert_eq!(frame, sel_bounds, "Move tool bounds must match layer transparency bounds");
+}

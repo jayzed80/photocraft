@@ -346,6 +346,20 @@ mod tests {
     }
 
     #[test]
+    fn eraser_zeroes_color_channels_when_alpha_reaches_zero() {
+        let mut s = Surface::new(PixelFormat::RGBA8);
+        s.fill_rect(Rect::new(0, 0, 100, 40), &[1.0, 0.0, 0.0, 1.0]);
+        // Also seed a transparent pixel with non-zero RGB (as from a prior copy/paste).
+        s.write_pixel(50, 45, &[1.0, 1.0, 1.0, 0.0]);
+        let mut st = stroke(&[(0.0, 35.0), (100.0, 35.0)], 40.0);
+        st.brush.erase = true;
+        apply_stroke(&mut s, &st, None, false);
+        assert_eq!(s.pixel(50, 35), vec![0.0, 0.0, 0.0, 0.0]);
+        assert_eq!(s.pixel(50, 45), vec![0.0, 0.0, 0.0, 0.0]);
+        assert!(s.content_bounds().y1 <= 20, "erased area should not expand content_bounds: {:?}", s.content_bounds());
+    }
+
+    #[test]
     fn lock_transparency_preserves_alpha() {
         let mut s = Surface::new(PixelFormat::RGBA8);
         s.fill_rect(Rect::new(0, 0, 50, 20), &[1.0, 1.0, 1.0, 1.0]);
