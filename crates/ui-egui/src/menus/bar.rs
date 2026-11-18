@@ -23,11 +23,16 @@ pub(super) const TOP_PREFERRED: [(&str, char); 10] = [
 /// `FireSource::Menu`, run by the frame's command drain; the bar's keys wait while a dialog or the
 /// shortcut recorder has the keyboard.
 pub fn menu_bar(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
+    menu_bar_rect(app, ui);
+}
+
+/// Draws the in-window menu bar and returns the bounding rect of its visible titles.
+pub(crate) fn menu_bar_rect(app: &mut PhotocraftApp, ui: &mut egui::Ui) -> egui::Rect {
     let (gate, _) = menu_gate(app);
     let ctx = ui.ctx().clone();
     let model = items::model(app, &ctx);
     let english = english_of(model);
-    MenuBarUi::new(&model.bar).english(&english).mnemonics(&TOP_PREFERRED).help_search(true).keyboard(!(gate.modal || gate.recording_shortcut)).show(ui);
+    MenuBarUi::new(&model.bar).english(&english).mnemonics(&TOP_PREFERRED).help_search(true).keyboard(!(gate.modal || gate.recording_shortcut)).show(ui).titles
 }
 
 /// The English name of a command or menu title of `model`, for the bar's and the palette's search.

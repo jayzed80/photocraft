@@ -22,6 +22,7 @@ pub mod workspace_ui;
 
 pub(crate) use bar::help_entries;
 pub use bar::menu_bar;
+pub(crate) use bar::menu_bar_rect;
 pub use invoke::invoke;
 pub(crate) use invoke::{invoke_unguarded, panel_alias};
 pub use items::{MenuModel, base_rows, is_live, menu_rows, model, row};
