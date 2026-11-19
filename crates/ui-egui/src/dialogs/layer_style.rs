@@ -38,6 +38,8 @@ mod contour;
 mod gradient_field;
 #[cfg(test)]
 mod gradient_method_tests;
+#[cfg(test)]
+mod pattern_overlay_link_toggle_tests;
 
 /// The Styles preset gallery page id.
 pub const STYLES_PAGE: &str = "styles";
@@ -297,6 +299,80 @@ fn json_value(v: &Value) -> StyleValue {
     }
 }
 
+/// Tracks the Pattern Overlay `link` value across dialog passes so [`reconcile_pattern_link`]
+/// detects when the user toggles Link with Layer and adjusts `phaseX`/`phaseY` to keep the pattern fixed.
+const PATTERN_LINK_KEY: &str = "_patternLink";
+
+fn pattern_link_tag(link: bool) -> StyleValue {
+    StyleValue::Other(if link { "true" } else { "false" }.into())
+}
+
+fn sync_pattern_link_tag(kind: EffectKind, params: &mut StyleParams) {
+    if kind == EffectKind::PatternOverlay {
+        let link = params.bool("link").unwrap_or(true);
+        params.set(PATTERN_LINK_KEY, pattern_link_tag(link));
+    }
+}
+
+fn pattern_link_seen(params: &StyleParams) -> Option<bool> {
+    match params.get(PATTERN_LINK_KEY) {
+        Some(StyleValue::Other(s)) if s == "true" => Some(true),
+        Some(StyleValue::Other(s)) if s == "false" => Some(false),
+        _ => None,
+    }
+}
+
+fn pattern_anchor(doc: &Document, layer: &Layer) -> (f64, f64) {
+    layer.effects.reference.unwrap_or_else(|| {
+        let sb = photocraft_compose::effects_frame(layer, doc.bounds());
+        if sb.is_empty() { (0.0, 0.0) } else { (f64::from(sb.x0), f64::from(sb.y0)) }
+    })
+}
+
+fn target_pattern_anchor(app: &PhotocraftApp, doc: photocraft_doc::DocId, layer: LayerId) -> Option<(f64, f64)> {
+    let st = app.session.active().filter(|s| s.doc.id == doc)?;
+    let target = st.doc.layer(layer)?;
+    Some(pattern_anchor(&st.doc, target))
+}
+
+/// Keeps Pattern Overlay's document-space origin fixed when `link` is toggled in the dialog.
+fn reconcile_pattern_link(style: &mut LayerStyle, anchor: (f64, f64)) -> bool {
+    let mut changed = false;
+    for e in &mut style.effects {
+        if e.kind != EffectKind::PatternOverlay {
+            continue;
+        }
+        let now = e.params.bool("link").unwrap_or(true);
+        let Some(was) = pattern_link_seen(&e.params) else {
+            e.params.set(PATTERN_LINK_KEY, pattern_link_tag(now));
+            continue;
+        };
+        if was == now {
+            continue;
+        }
+        let px = e.params.number("phaseX").unwrap_or(0.0);
+        let py = e.params.number("phaseY").unwrap_or(0.0);
+        let (dx, dy) = if now { (-anchor.0, -anchor.1) } else { (anchor.0, anchor.1) };
+        let (nx, ny) = (px + dx, py + dy);
+        if nx.is_finite() && ny.is_finite() && (nx as f32).is_finite() && (ny as f32).is_finite() {
+            e.params.set("phaseX", StyleValue::Number(nx));
+            e.params.set("phaseY", StyleValue::Number(ny));
+        }
+        e.params.set(PATTERN_LINK_KEY, pattern_link_tag(now));
+        changed = true;
+    }
+    changed
+}
+
+fn reconcile_open_pattern_link(app: &mut PhotocraftApp, id: DialogId, doc: photocraft_doc::DocId, layer: LayerId, ctx: &egui::Context) {
+    let Some(anchor) = target_pattern_anchor(app, doc, layer) else { return };
+    if let Some(dialog) = app.framework.dialogs.get_mut_by_id::<HostedLayerStyle>(id)
+        && reconcile_pattern_link(&mut dialog.draft_mut().style, anchor)
+    {
+        ctx.request_repaint();
+    }
+}
+
 /// The draft's parameters for the command parameters `values` of an effect of `kind`: each typed by
 /// the spec's field kind, the rest by their JSON type. `fx` is the effect snapshot, kept as `Other`
 /// under `"fx"`.
@@ -320,7 +396,9 @@ fn style_params(kind: EffectKind, values: &Value, fx: Option<&Value>) -> StylePa
     if let Some(fx) = fx {
         params.insert("fx".into(), StyleValue::Other(fx.to_string()));
     }
-    StyleParams(params)
+    let mut params = StyleParams(params);
+    sync_pattern_link_tag(kind, &mut params);
+    params
 }
 
 /// The command parameters for the draft's `params`, without the `fx` snapshot ([`fx_of`]).
@@ -340,7 +418,7 @@ fn style_params_json(params: &StyleParams) -> Value {
                 continue;
             }
             StyleValue::Point(p) => json!(p),
-            StyleValue::Other(_) if key == "fx" => continue,
+            StyleValue::Other(_) if key == "fx" || key == PATTERN_LINK_KEY => continue,
             StyleValue::Other(s) => serde_json::from_str(s).unwrap_or(Value::Null),
             // A value kind the dialog does not know carries nothing the command grammar names.
             _ => continue,
@@ -777,7 +855,10 @@ pub(crate) fn take(app: &mut PhotocraftApp, ctx: &egui::Context) {
         app.layer_style_target = None;
         app.style_preview = None;
         discard_child(app, id);
-        if let DialogResult::Ok(style) = result {
+        if let DialogResult::Ok(mut style) = result {
+            if let Some(anchor) = target_pattern_anchor(app, doc, layer) {
+                reconcile_pattern_link(&mut style, anchor);
+            }
             finish(app, doc, layer, &style);
         }
         return;
@@ -791,6 +872,7 @@ pub(crate) fn take(app: &mut PhotocraftApp, ctx: &egui::Context) {
         app.framework.dialogs.cancel_by_id(ctx, id);
         return;
     }
+    reconcile_open_pattern_link(app, id, doc, layer, ctx);
     let asks = app.framework.dialogs.get_mut_by_id::<HostedLayerStyle>(id).map(HostedLayerStyle::take_asks).unwrap_or_default();
     for ask in asks {
         match ask {
@@ -801,10 +883,11 @@ pub(crate) fn take(app: &mut PhotocraftApp, ctx: &egui::Context) {
             }
             LayerStyleAsk::ApplyStyle(name) => apply_style_preset(app, id, &name),
             LayerStyleAsk::NewStyle => save_new_style(app, id, layer),
-            LayerStyleAsk::MakeDefault(kind, params) => {
+            LayerStyleAsk::MakeDefault(kind, mut params) => {
                 // The stored defaults reach new instances from the next open and, through `set_defaults`, the open dialog.
                 match app.run("layer.layerStyle.makeDefault", json!({"kind": kind.key(), "params": style_params_json(&params)})) {
                     Ok(_) => {
+                        sync_pattern_link_tag(kind, &mut params);
                         if let Some(dialog) = app.framework.dialogs.get_mut_by_id::<HostedLayerStyle>(id) {
                             dialog.set_defaults(kind, params);
                         }
@@ -899,7 +982,10 @@ fn preview_source(app: &PhotocraftApp, idx: usize) -> Option<(LayerStyle, LayerI
     if !dialog.draft().preview || dialog.is_comparing() {
         return None;
     }
-    let style = color_picker::preview_style(app)?;
+    let mut style = color_picker::preview_style(app)?;
+    if let Some(target) = st.doc.layer(layer) {
+        reconcile_pattern_link(&mut style, pattern_anchor(&st.doc, target));
+    }
     let key = (style.render_hash() ^ st.revision.wrapping_mul(0x9e37_79b9_7f4a_7c15)) | 1 << 63;
     Some((style, layer, key))
 }
